@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -48,7 +48,11 @@ fn main() {
 
     match cli.command {
         Commands::Init => {
-            println!("This is the INIT COMMAND ");
+            fs::create_dir(".git").unwrap();
+            fs::create_dir(".git/objects").unwrap();
+            fs::create_dir(".git/refs").unwrap();
+            fs::write(".git/HEADS", "ref: refs/heads/main\n").unwrap();
+            println!("Initialized git directory");
         }
 
         Commands::HashObject { file, write } => {
