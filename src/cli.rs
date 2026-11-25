@@ -26,4 +26,11 @@ pub enum Commands {
 
         file: PathBuf,
     },
+
+    LsTree {
+        #[arg(long)]
+        name_only: bool,
+
+        tree_hash: String,
+    },
 }

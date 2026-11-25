@@ -22,6 +22,13 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::HashObject { write, file } => {
             commands::hash_object::execute(write, file)?;
         }
+
+        cli::Commands::LsTree {
+            name_only,
+            tree_hash,
+        } => {
+            commands::ls_tree::execute(name_only, tree_hash)?;
+        }
     }
 
     Ok(())
