@@ -92,3 +92,125 @@ where
 
     Ok(hex::encode(hash))
 }
+
+pub struct TreeEntry {
+    pub mode: String,
+    pub name: Vec<u8>,
+    pub hash: [u8; 20], // 20 byte Sha1 hash
+}
+
+impl TreeEntry {
+    // This converts the 20-byte hash into the familiar 40-character SHA-1 representation
+    pub fn hash_hex(&self) -> String {
+        self.hash.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
+// format: <mode> <filename>\0<20-byte SHA-1>
+
+// for example,(conceptual) :
+// 100644 README.md\0[20 raw hash bytes]
+// 40000 src\0[20 raw hash bytes]
+pub fn parse_tree(content: &[u8]) -> anyhow::Result<Vec<TreeEntry>> {
+    let mut cursor = 0_usize;
+    let mut entries = Vec::<TreeEntry>::new();
+
+    while cursor < content.len() {
+        let mode_end = &content[cursor..]
+            .iter()
+            .position(|&byte| byte == b' ')
+            .context("Invalid tree entry : missing mode separator")?
+            + cursor;
+
+        let mode = std::str::from_utf8(&content[cursor..mode_end])
+            .context("Invalid tree entry mode")?
+            .to_owned();
+
+        let name_start = mode_end + 1;
+
+        let name_end = content[name_start..]
+            .iter()
+            .position(|&byte| byte == 0)
+            .context("Invalid tree entry : missing NULL BYTE.")?
+            + name_start;
+
+        let name = content[name_start..name_end].to_vec();
+
+        let hash_start = name_end + 1;
+        let hash_end = hash_start + 20;
+
+        let hash_bytes = content
+            .get(hash_start..hash_end)
+            .context("Invalid tree entry: incomplete object hash")?;
+
+        let hash: [u8; 20] = hash_bytes.try_into().context("Invalid tree entry hash")?;
+        entries.push(TreeEntry { mode, name, hash });
+
+        cursor = hash_end;
+    }
+
+    Ok(entries)
+}
+
+#[derive(Debug)]
+pub enum ObjectType {
+    Blob,
+    Tree,
+    Commit,
+}
+
+pub fn read_object_via_hash(hash: &str) -> anyhow::Result<(ObjectType, Vec<u8>)> {
+    use anyhow::{Context, bail, ensure};
+    use flate2::read::ZlibDecoder;
+    use std::fs::File;
+    use std::io::Read;
+
+    ensure!(
+        hash.len() == 40 && hash.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid object hash"
+    );
+
+    let hash = hash.to_ascii_lowercase();
+
+    let path = format!(".git/objects/{}/{}", &hash[..2], &hash[2..]);
+
+    let file = File::open(&path).with_context(|| format!("Failed to open git object: {path}"))?;
+
+    let mut decoder = ZlibDecoder::new(file);
+    let mut decompressed = Vec::new();
+
+    decoder
+        .read_to_end(&mut decompressed)
+        .context("Failed to decompress git object")?;
+
+    let header_end = decompressed
+        .iter()
+        .position(|&byte| byte == 0)
+        .context("Invalid git object: missing NULL byte")?;
+
+    let header =
+        std::str::from_utf8(&decompressed[..header_end]).context("Invalid git object header")?;
+
+    let (object_type, size_str) = header
+        .split_once(' ')
+        .context("Invalid git object header")?;
+
+    let size = size_str.parse::<usize>().context("Invalid object size")?;
+
+    let content = decompressed[header_end + 1..].to_vec();
+
+    ensure!(
+        content.len() == size,
+        "Object size mismatch: expected {size}, got {}",
+        content.len()
+    );
+
+    let object_type = match object_type {
+        "blob" => ObjectType::Blob,
+        "tree" => ObjectType::Tree,
+        "commit" => ObjectType::Commit,
+        _ => bail!("Unsupported object type: {object_type}"),
+    };
+
+    Ok((object_type, content))
+}
