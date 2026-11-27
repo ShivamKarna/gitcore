@@ -112,40 +112,61 @@ impl TreeEntry {
 // 100644 README.md\0[20 raw hash bytes]
 // 40000 src\0[20 raw hash bytes]
 pub fn parse_tree(content: &[u8]) -> anyhow::Result<Vec<TreeEntry>> {
-    let mut cursor = 0_usize;
+    let mut cursor = 0;
     let mut entries = Vec::<TreeEntry>::new();
 
     while cursor < content.len() {
-        let mode_end = &content[cursor..]
+        let mode_end = content
+            .get(cursor..)
+            .context("Invalid tree: invalid cursor")?
             .iter()
             .position(|&byte| byte == b' ')
-            .context("Invalid tree entry : missing mode separator")?
+            .context("Invalid tree: missing mode separator")?
             + cursor;
 
-        let mode = std::str::from_utf8(&content[cursor..mode_end])
-            .context("Invalid tree entry mode")?
-            .to_owned();
+        // dbg!(cursor);
+        // dbg!(mode_end);
+        // dbg!(&content[cursor..mode_end]);
+        // dbg!(String::from_utf8_lossy(&content[cursor..mode_end]));
+        //
+        // dbg!(content.len());
+        // dbg!(&content[..content.len().min(50)]);
+
+        let mode = std::str::from_utf8(
+            content
+                .get(cursor..mode_end)
+                .context("Invalid tree entry mode")?,
+        )
+        .context("Invalid tree entry mode")?
+        .to_owned();
 
         let name_start = mode_end + 1;
 
-        let name_end = content[name_start..]
+        let name_end = content
+            .get(name_start..)
+            .context("Invalid tree entry name")?
             .iter()
             .position(|&byte| byte == 0)
-            .context("Invalid tree entry : missing NULL BYTE.")?
+            .context("Invalid tree entry: missing NULL byte")?
             + name_start;
 
-        let name = content[name_start..name_end].to_vec();
+        let name = content
+            .get(name_start..name_end)
+            .context("Invalid tree entry name")?
+            .to_vec();
 
         let hash_start = name_end + 1;
-        let hash_end = hash_start + 20;
+        let hash_end = hash_start.checked_add(20).context("Hash offset overflow")?;
 
         let hash_bytes = content
             .get(hash_start..hash_end)
-            .context("Invalid tree entry: incomplete object hash")?;
+            .context("Invalid tree entry hash")?;
 
-        let hash: [u8; 20] = hash_bytes.try_into().context("Invalid tree entry hash")?;
+        let hash: [u8; 20] = hash_bytes
+            .try_into()
+            .context("Invalid tree entry hash length")?;
+
         entries.push(TreeEntry { mode, name, hash });
-
         cursor = hash_end;
     }
 
